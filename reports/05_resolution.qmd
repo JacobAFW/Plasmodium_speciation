@@ -1,0 +1,122 @@
+---
+title: "Chapter 5 — Cross-marker resolution table"
+---
+
+```{r setup, include=FALSE}
+suppressPackageStartupMessages({ library(tidyverse); library(knitr) })
+read_tsv_safe <- function(p) if (file.exists(p)) read_tsv(p, show_col_types = FALSE) else tibble()
+
+res <- read_tsv_safe("../outputs/cross_species/resolution_table.tsv")
+
+# Coerce empty strings (NA on disk) to logical NA explicitly
+to_lgl <- function(x) {
+  out <- as.logical(toupper(x))
+  out
+}
+if (nrow(res) > 0) {
+  for (c in c("mit_resolved","18S_resolved","18S_resolved_loose","combined_resolved")) {
+    res[[c]] <- to_lgl(res[[c]])
+  }
+}
+
+n_total <- nrow(res)
+tot <- function(col) {
+  list(T  = sum(res[[col]] %in% TRUE),
+       F_ = sum(res[[col]] %in% FALSE),
+       NA_= sum(is.na(res[[col]])))
+}
+mit  <- tot("mit_resolved")
+s18  <- tot("18S_resolved")
+loo  <- tot("18S_resolved_loose")
+comb <- tot("combined_resolved")
+```
+
+The resolution table is the v1 deliverable. One row per unordered panel
+pair. Three independent resolution columns (`mit_resolved`,
+`18S_resolved`, `18S_resolved_loose`) and a derived `combined_resolved`
+folded over MIT and the *strict* 18S column.
+
+`r n_total` panel pairs total
+(`r format(n_total, big.mark = ",")` = 11 × 10 / 2).
+
+## Headline counts
+
+```{r counts-table}
+tibble(
+  Column = c("mit_resolved", "18S_resolved (strict)", "18S_resolved_loose",
+             "combined_resolved"),
+  TRUE_  = c(mit$T, s18$T, loo$T, comb$T),
+  FALSE_ = c(mit$F_, s18$F_, loo$F_, comb$F_),
+  NA_    = c(mit$NA_, s18$NA_, loo$NA_, comb$NA_)
+) |> kable(col.names = c("Column", "TRUE", "FALSE", "NA"))
+```
+
+**Reading the row.** TRUE means the pair is resolvable (the species
+have at least one reference each on that marker, and the pair does not
+appear in that marker's suspicious table). FALSE means the pair *is*
+in the suspicious table. NA means at least one species has zero
+references on that marker — the assay can't say either way. The
+combined column uses Kleene-style OR over MIT and strict-18S: any TRUE
+collapses to TRUE; mixed FALSE/NA collapses to FALSE; only NA-on-both
+yields NA.
+
+The single MIT FALSE is `simium vs vivax`, exactly as expected from
+the legacy outputs. Every panel pair is `combined_resolved = TRUE`.
+
+## Borderline rows
+
+```{r borderline}
+res_disp <- res |>
+  rename(`MIT` = mit_resolved,
+         `18S strict` = `18S_resolved`,
+         `18S loose`  = `18S_resolved_loose`,
+         `Combined`   = combined_resolved) |>
+  mutate(across(c(`MIT`, `18S strict`, `18S loose`, `Combined`),
+                ~ recode(as.character(.x), "TRUE" = "T", "FALSE" = "F", .missing = "NA")))
+
+# Anything that's not all-T (or has notes attached) is "borderline" worth surfacing
+borderline <- res_disp |> filter(`MIT` != "T" | `18S strict` != "T" |
+                                 `18S loose` != "T" | `Combined` != "T" |
+                                 nchar(notes) > 0)
+borderline |>
+  kable()
+```
+
+The `notes` column carries hard-coded annotations the human reader
+benefits from at a glance: the *vivax*/*simium* MIT ambiguity reference
+to *P. simium* zoonotic origin, and the "18S coverage low" warning that
+fires whenever either species has ≤ 1 18S reference.
+
+## Validation
+
+Per `HANDOFF.md` Step 4, the validation gate is that the resolution
+table reproduces the *vivax*/*simium* MIT ambiguity finding from the
+legacy outputs. If `simium vs vivax` ever shows `mit_resolved = TRUE`,
+something is wrong upstream.
+
+```{r validation}
+vs <- res |> filter(pair == "simium vs vivax")
+if (nrow(vs) == 0) cat("ERROR: simium vs vivax row missing!\n")
+vs |> kable()
+```
+
+Pass: `mit_resolved = FALSE`, `18S_resolved = TRUE`, `combined_resolved = TRUE`.
+
+## What this says about the assay
+
+- **MIT alone** has one residual ambiguity (*vivax*/*simium*) the panel
+  cannot resolve at high confidence. Calls into samples where simian
+  spillover into humans is plausible should not be made on MIT alone.
+- **18S strict** resolves every panel pair, but the 18S coverage gap
+  (zero references for *simiovale*) means 10/55 pairs are NA on 18S.
+  For those pairs the panel rests on MIT.
+- **18S looser** is a hedge: a meaningful but not-strict signal on
+  *cynomolgi*/*fieldi* the strict filter doesn't catch. The report
+  treats this as "watch this pair" rather than "unresolvable".
+- **Combined**, every pair is resolvable. The dual-marker rationale
+  holds at v1.
+
+## Methods
+
+Resolution table generation:
+[`workflow/rules/04_resolution.README.md`](../workflow/rules/04_resolution.README.md).

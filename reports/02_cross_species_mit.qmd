@@ -1,0 +1,95 @@
+---
+title: "Chapter 2 — MIT cross-species similarity"
+---
+
+```{r setup, include=FALSE}
+suppressPackageStartupMessages({ library(tidyverse); library(knitr) })
+read_tsv_safe <- function(p) if (file.exists(p)) read_tsv(p, show_col_types = FALSE) else tibble()
+
+mit_blast <- read_tsv_safe("../outputs/blast/self_blast_mit.tsv")
+mit_susp  <- read_tsv_safe("../outputs/cross_species/mit_suspicious.tsv")
+mit_clos  <- read_tsv_safe("../outputs/cross_species/mit_closest_per_seq.tsv")
+mit_pair  <- read_tsv_safe("../outputs/cross_species/mit_pair_summary.tsv")
+
+n_blast   <- nrow(mit_blast)
+n_susp    <- nrow(mit_susp)
+n_pairs   <- nrow(mit_pair)
+n_strict  <- sum(mit_pair$strict_ambiguity, na.rm = TRUE)
+```
+
+The MIT self-BLAST takes every reference MIT genome as both query and
+subject and emits the canonical 10-column tabular output. After
+filtering to the 11 panel species, dropping self-hits and within-species
+hits, and keeping the top 5 HSPs per query/subject pair, the strict
+filter (`pident ≥ 99 AND cov_shorter ≥ 0.99 AND shorter_len ≥ 10`) is
+applied. *cov_shorter* — the alignment length divided by the shorter of
+the two sequences' total lengths — is the active metric because BLAST
+is local and short alignments at high identity are uninformative.
+
+`r format(n_blast, big.mark = ",")` BLAST hits in `self_blast_mit.tsv`
+total (HSPs, before any filtering). `r n_susp` HSPs survive the strict
+filter and land in `mit_suspicious.tsv`.
+
+## Suspicious cross-species hits (strict filter)
+
+```{r mit-suspicious-table}
+mit_susp |>
+  select(query_species, subject_species, pident, aln_len,
+         shorter_len, cov_shorter, mismatch, gapopen, bitscore) |>
+  arrange(desc(pident)) |>
+  kable(digits = c(0, 0, 3, 0, 0, 4, 0, 0, 1))
+```
+
+All `r n_susp` strict-filter hits are between *P. simium* and *P. vivax*
+across `r length(unique(c(mit_susp$query, mit_susp$subject)))` unique
+reference sequences, with pident running 99.23–99.95% over ~5832–5942
+bp full-length coverage. *P. simium* is recently zoonotic from
+*P. vivax* and the mitogenomes are essentially identical at this
+resolution. This is the canonical example the assay's dual-marker
+rationale rests on: MIT alone cannot tell *P. simium* and *P. vivax*
+apart at high confidence, but 18S can (Chapter 3).
+
+## Per-pair summary
+
+```{r mit-pair-summary}
+mit_pair |>
+  arrange(desc(strict_ambiguity), desc(best_pident)) |>
+  head(15) |>
+  kable(digits = c(NA, 0, 3, 0, 4, 4, 0, 0, NA, NA),
+        col.names = c("Pair", "n_HSPs", "best_pident", "max_aln_len",
+                      "max_cov_shorter", "max_mincov", "min_mismatch",
+                      "min_gapopen", "strict_ambig.", "ladder_class"))
+```
+
+`r n_pairs` cross-species pairs surface across MIT after dropping
+within-species hits. `r n_strict` pair(s) trigger the strict-ambiguity
+flag (the `simium vs vivax` row above). The looser ladder (Chapter
+context) classifies each pair into one of six tiers; rows above the
+strict-ambiguity threshold are `high_confidence_possible_ambiguity` and
+the rest fall through the ladder.
+
+## Closest non-self match per sequence
+
+The closest-per-seq table tells us, for every reference MIT sequence,
+what its nearest cross-species relative is. It's useful for spotting
+reference outliers and pairs sitting just below the strict threshold.
+
+```{r mit-closest-tail}
+mit_clos |>
+  arrange(desc(pident)) |>
+  head(10) |>
+  select(query, subject, pident, divergence_pct, aln_len, pct_covered, bitscore) |>
+  kable(digits = c(NA, NA, 3, 3, 0, 2, 1))
+```
+
+Top of the table is dominated by *vivax*/*simium* pairs (consistent
+with the suspicious-hit table). The first non-vivax/simium row is the
+canonical "well-resolved" MIT signal — pident drops below 99% and
+divergence climbs.
+
+## Methods
+
+Cross-species filter implementation:
+[`workflow/rules/02_cross_species.README.md`](../workflow/rules/02_cross_species.README.md).
+Pair summary + ladder classification:
+[`workflow/rules/04_resolution.README.md`](../workflow/rules/04_resolution.README.md).

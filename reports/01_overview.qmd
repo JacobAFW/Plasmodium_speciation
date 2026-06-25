@@ -1,0 +1,85 @@
+---
+title: "Chapter 1 — Reference panel overview"
+---
+
+```{r setup, include=FALSE}
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(knitr)
+})
+
+read_tsv_safe <- function(p, ...) if (file.exists(p)) read_tsv(p, show_col_types = FALSE, ...) else tibble()
+
+# `*_lengths.tsv` is the seqkit fx2tab output — two cols, no header.
+mit_lens   <- read_tsv_safe("../outputs/qc/mit_lengths.tsv",
+                            col_names = c("id","len"))
+s18_lens   <- read_tsv_safe("../outputs/qc/18S_lengths.tsv",
+                            col_names = c("id","len"))
+mit_class  <- read_tsv_safe("../outputs/qc/mit_length_classification.tsv")
+s18_class  <- read_tsv_safe("../outputs/qc/18S_length_classification.tsv")
+s18_cov    <- read_tsv_safe("../outputs/cross_species/18S_species_coverage.tsv")
+
+# MIT IDs are self-describing — species is the prefix `P<species>_…`.
+# Strip the leading `P` to canonicalise.
+mit_per_species <- mit_lens |>
+  mutate(species = str_to_lower(str_extract(id, "^P[A-Za-z]+"))) |>
+  mutate(species = str_replace(species, "^p", "")) |>
+  count(species, name = "n_sequences", sort = TRUE)
+```
+
+The two reference panels are the inputs the entire pipeline operates on.
+Both come straight from NCBI multi-fasta DBs and are filtered to the 11
+canonical target species before any cross-species or alignment work.
+
+## Reference panels
+
+```{r panel-counts}
+panel <- tibble(
+  marker = c("MIT", "18S"),
+  n_sequences = c(nrow(mit_lens), nrow(s18_lens)),
+  median_len  = c(median(mit_lens$len), median(s18_lens$len)),
+  n_partial   = c(sum(mit_class$is_partial, na.rm = TRUE),
+                  sum(s18_class$is_partial, na.rm = TRUE))
+)
+kable(panel, col.names = c("Marker", "Sequences (target spp.)",
+                           "Median length (bp)", "Partial (<90% of max)"))
+```
+
+"Partial" is `len < 0.9 * max(len)` per marker. MIT mitogenomes cluster
+tightly around the full-genome length (~6 kb); 18S has a wider spread
+because public 18S sequences vary from short PCR fragments to full-gene
+inserts.
+
+## MIT references per species
+
+```{r mit-per-species}
+kable(mit_per_species, col.names = c("Species", "MIT references"))
+```
+
+## 18S coverage check
+
+The 18S species-coverage check is a v1 acceptance criterion (HANDOFF.md
+Step 4). Every canonical target species needs at least one 18S
+reference for that pair to be evaluable on 18S; species with zero
+references are flagged here so downstream resolution-table NAs are
+attributable.
+
+```{r s18-coverage}
+kable(s18_cov, col.names = c("Species", "18S references", "Covered (≥1)"))
+
+n_covered <- sum(s18_cov$is_covered, na.rm = TRUE)
+n_total   <- nrow(s18_cov)
+missing   <- s18_cov |> filter(!is_covered) |> pull(species)
+```
+
+`r n_covered`/`r n_total` target species are covered on 18S. Missing:
+**`r if (length(missing) == 0) "none" else paste(missing, collapse = ", ")`**.
+Any pair involving a missing species is `NA` on the 18S column of the
+resolution table; for those pairs the assay's resolution claim depends
+on MIT alone.
+
+## Methods
+
+Reference staging and length tables: [`workflow/rules/01_blast.README.md`](../workflow/rules/01_blast.README.md),
+[`workflow/rules/02_cross_species.README.md`](../workflow/rules/02_cross_species.README.md).
+Coverage check: [`workflow/rules/04_resolution.README.md`](../workflow/rules/04_resolution.README.md).

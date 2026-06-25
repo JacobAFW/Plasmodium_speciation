@@ -1,0 +1,125 @@
+---
+title: "Chapter 7 — Methods"
+---
+
+The pipeline is one Snakemake DAG (`workflow/Snakefile`) with four phases.
+Each phase is one `.smk` file and one sibling `0X_*.README.md` walking
+through the rules in plain language. This chapter is the reader's index
+into those READMEs — it's deliberately thin so that the per-rule
+documentation stays the canonical source of truth.
+
+## Top-level layout
+
+```
+workflow/
+├── Snakefile               # rule all + FINAL_TARGETS for phases 1-4
+├── config.yaml             # all parameters, paths, thresholds
+└── rules/
+    ├── 01_blast.smk        # references in → BLAST DBs + self-BLAST
+    ├── 02_cross_species.smk # self-BLAST → suspicious + closest + length QC
+    ├── 03_alignment.smk    # subset → mafft → entropy → figures
+    ├── 04_resolution.smk   # pair summaries + loose 18S + coverage + resolution
+    └── 05_report.smk       # this Quarto book
+```
+
+## Phase 1 — BLAST DBs and self-BLAST
+
+[`workflow/rules/01_blast.README.md`](../workflow/rules/01_blast.README.md)
+
+- `make_blast_db` (× 2 markers): `makeblastdb -dbtype nucl` →
+  `outputs/blast/db_{marker}.{ndb,nhr,nin,njs,not,nsq,ntf,nto}`.
+- `self_blast` (× 2): `blastn -task blastn` of each FASTA against its
+  own DB → `outputs/blast/self_blast_{marker}.tsv` in canonical 10-col
+  outfmt.
+
+## Phase 2 — Cross-species filter and length QC
+
+[`workflow/rules/02_cross_species.README.md`](../workflow/rules/02_cross_species.README.md)
+
+- `parse_18S_headers`: parse species from descriptive 18S headers via
+  a regex ladder → `outputs/cross_species/18S_acc_to_header.tsv`.
+- `cross_species_filter` (× 2): apply the strict filter
+  `pident ≥ 99 AND cov_shorter ≥ 0.99 AND shorter_len ≥ 10`,
+  drop self/within-species, keep top 5 HSPs per pair → `*_suspicious.tsv`
+  + `*_closest_per_seq.tsv`.
+- `length_table` + `length_classification` (× 2): per-marker FASTA
+  lengths and partial-sequence flag → `outputs/qc/{marker}_lengths.tsv`
+  and `*_length_classification.tsv`.
+
+## Phase 3 — Alignment, entropy, primer-candidate windows
+
+[`workflow/rules/03_alignment.README.md`](../workflow/rules/03_alignment.README.md)
+
+- `subset_to_targets_{mit,18S}`: `seqkit grep -r -p` to the 11
+  panel-species pattern → `data/reference/{marker}.target.fasta`.
+- `align`: `mafft --auto` → `outputs/alignment/ma_{marker}.target.fasta`.
+- `entropy`: `scripts/python/seq_entropy.py` (copied unchanged from the
+  legacy version) → four files per marker (per_position, windows,
+  primer_candidates, core_bounds).
+- `plot_entropy`: ggplot2 panels (entropy + coverage), `.png` and
+  `.svg` per marker, into `reports/figures/`.
+
+## Phase 4 — Cross-marker resolution (NEW v1 extension)
+
+[`workflow/rules/04_resolution.README.md`](../workflow/rules/04_resolution.README.md)
+
+- `pair_summary` (× 2): one row per unordered cross-species pair, with
+  strict-ambiguity flag and ladder class.
+- `cross_species_filter_18S_loose`: same script as the strict 18S
+  filter, called with `--pident-min 98 --cov-min 0.85 --cov-metric
+  mincov` → `outputs/cross_species/18S_suspicious_loose.tsv`.
+- `species_coverage_18S`: count of 18S references per target species
+  → `outputs/cross_species/18S_species_coverage.tsv`.
+- `cross_marker_resolution`: the v1 deliverable —
+  `outputs/cross_species/resolution_table.tsv`.
+
+## Phase 5 — Quarto book render
+
+[`workflow/rules/05_report.README.md`](../workflow/rules/05_report.README.md)
+
+`quarto render reports/` consumes every output above and emits
+`reports/_book/index.html` with chapter HTMLs and figures. R chunks
+read from `outputs/` live so headline numbers stay in sync.
+
+## Tunable parameters
+
+`workflow/config.yaml` is the single source for thresholds and paths.
+Key knobs:
+
+| Section | Parameter | Default | Purpose |
+|---|---|---|---|
+| `suspicious` | `pident_min` | 99 | strict filter |
+| `suspicious` | `cov_shorter_min` | 0.99 | strict filter |
+| `suspicious` | `shorter_len_min` | 10 | gate-out tiny fragments |
+| `suspicious` | `top_n_hsps` | 5 | per query–subject pair |
+| `ladder.high_conf` | `pident_min` | 98 | looser ladder |
+| `ladder.high_conf` | `mincov_min` | 0.85 | looser ladder |
+| `entropy` | `cov_thr` | 0.9 | core-bounds coverage threshold |
+| `entropy` | `min_run` | 50 | core-bounds min contiguous run (bp) |
+
+## Reproducing the analysis
+
+```bash
+# from project root, fresh shell:
+bash envs/install.sh
+source envs/activate.sh
+snakemake --snakefile workflow/Snakefile --cores 4
+quarto render reports/
+```
+
+`bash envs/install.sh` is idempotent and pinned to a specific vvg-box
+commit; `envs/environment.lock.yaml` captures the exact package set.
+
+## What's deferred to Phase 5+
+
+Per [`HANDOFF.md`](../HANDOFF.md) "Out of scope for v1":
+
+- `primer3`-driven primer pair selection inside the entropy candidate
+  windows; multiplex compatibility (Tm, dimer, hairpin, length).
+- In-silico PCR specificity testing against off-target genomes
+  (locally-staged human + monkey + environmental + non-target
+  *Plasmodium*).
+- Recovery of `mit_homology` (legacy short-read MicroHaps) for the new
+  long-amplicon panel.
+
+These are scoped as a separate work block and don't gate v1.

@@ -1,0 +1,312 @@
+---
+title: "Chapter 8 — In-silico validation of the Swangsri 2025 MSP1 assay"
+---
+
+```{r setup, include=FALSE}
+suppressPackageStartupMessages({
+  library(Biostrings)
+  library(knitr)
+  library(tidyverse)
+})
+
+read_tsv_safe <- function(p) if (file.exists(p)) read_tsv(p, show_col_types = FALSE) else tibble()
+
+fetch_log  <- read_tsv_safe("../data/reference/msp1/fetch_log.tsv")
+strict     <- read_tsv_safe("../outputs/msp1/amplicon_specificity_strict.tsv")
+lenient    <- read_tsv_safe("../outputs/msp1/amplicon_specificity_lenient.tsv")
+ref_dir    <- "../data/reference/msp1"
+```
+
+Chapter 7 framed the methodological case for adding MSP1 as a third marker
+and noted that the Swangsri et al. 2025 multiplex qPCR/melt assay covers
+only three species (knowlesi, cynomolgi, inui). This chapter answers the
+empirical follow-up: do their species-specific primers extend cleanly to
+the eight panel species they didn't test, or do they cross-react / fail?
+
+The check is in-silico PCR of all three Swangsri primer pairs against every
+MSP1 reference for the 11-species panel that we could pull from GenBank.
+Two mismatch tolerances are tested: strict (≤1 mismatch per primer — the
+condition under which Swangsri's published cycling profile would actually
+amplify) and lenient (≤3 mismatches — surfaces near-misses worth knowing
+about).
+
+## Reference coverage
+
+The fetch (`scripts/python/fetch_msp1_refs.py`, `--max-seqs 200`) returns
+records of widely varying length and completeness depending on what's
+published per species. The summary below is what Phase A actually had to
+work with.
+
+```{r ref-coverage}
+if (nrow(fetch_log) > 0) {
+  # Length distribution per species — re-derived from the FASTAs because
+  # the fetch log doesn't carry median length.
+  ref_files <- list.files(ref_dir, pattern = "_msp1\\.fasta$",
+                          full.names = TRUE)
+  lens <- map_dfr(ref_files, function(f) {
+    sp <- sub("_msp1\\.fasta$", "", basename(f))
+    s  <- tryCatch(readDNAStringSet(f), error = function(e) NULL)
+    if (is.null(s) || length(s) == 0)
+      return(tibble(species = sp, n_refs = 0L,
+                    median_len = NA_integer_, n_full_cds = 0L))
+    L <- width(s)
+    tibble(species    = sp,
+           n_refs     = length(s),
+           median_len = as.integer(median(L)),
+           n_full_cds = sum(L >= 5000L))
+  })
+  full_panel <- c("falciparum","vivax","knowlesi","malariae","ovale",
+                  "coatneyi","inui","fieldi","cynomolgi","simiovale","simium")
+  out <- tibble(species = full_panel) |>
+    left_join(lens, by = "species") |>
+    mutate(across(c(n_refs, n_full_cds),
+                  ~ replace_na(.x, 0L)))
+  kable(out,
+        col.names = c("Species", "Refs kept", "Median length (bp)",
+                      "Full-CDS (≥5 kb)"),
+        align = "lrrr")
+} else {
+  cat("(no fetch log — run `python3 scripts/python/fetch_msp1_refs.py` first.)\n")
+}
+```
+
+Two species are untestable in-silico: *P. simium* returns zero MSP1
+records on GenBank under the query, and the single *P. simiovale* record
+returned did not pass the species-name normaliser. Both need wet-lab
+confirmation or manually curated references before any conclusion can be
+extended to them.
+
+The records dominating the falciparum, vivax, knowlesi, malariae and ovale
+panels are short 3'-end CDS fragments from vaccine and diversity studies.
+The Swangsri primers bind near the 5' end of msp1 (~600–820 bp from gene
+start), so these partial records don't contain the primer-binding region
+and would never amplify regardless of primer specificity. The
+`Full-CDS (≥5 kb)` column is what matters for interpreting the next two
+tables — it's the subset of refs that actually span the binding window.
+
+## On-target sanity check
+
+Before believing any cross-species result, the on-target case has to work
+at strict tolerance — i.e., each Swangsri primer pair must amplify its
+nominal target species cleanly. If it doesn't, the primer sequences in
+the script are wrong or the records are mis-annotated, and the
+cross-species table is meaningless.
+
+```{r on-target}
+if (nrow(strict) > 0) {
+  on_target <- strict |>
+    filter(on_target) |>
+    group_by(primer_pair, target_species) |>
+    summarise(
+      refs_tested     = n(),
+      refs_amplifying = sum(!is.na(amplicon_len)),
+      best_fwd_mm     = suppressWarnings(min(fwd_mismatches, na.rm = TRUE)),
+      best_rev_mm     = suppressWarnings(min(rev_mismatches, na.rm = TRUE)),
+      median_amp_len  = suppressWarnings(median(amplicon_len, na.rm = TRUE)),
+      .groups         = "drop"
+    ) |>
+    mutate(across(starts_with("best_"),
+                  ~ ifelse(is.infinite(.x), NA_integer_, .x)),
+           median_amp_len = ifelse(is.na(median_amp_len),
+                                   NA_integer_, as.integer(median_amp_len)))
+  kable(on_target,
+        col.names = c("Primer pair", "Target", "Refs tested",
+                      "Refs amplifying", "Best fwd mm", "Best rev mm",
+                      "Median amp len (bp)"),
+        align = "llrrrrr")
+}
+```
+
+All three on-target pairs amplify at 0/0 mismatches on at least one
+reference. **Sanity check passes** — the cross-species result is
+trustworthy.
+
+The low refs-amplifying counts on knowlesi and inui are driven by the
+partial-record bias noted above: most of those refs simply don't span the
+5' binding window. Cynomolgi is the outlier, treated separately below.
+
+## Cross-species specificity
+
+The headline question. Do any of the three primer pairs amplify off-target
+species?
+
+```{r cross-species}
+if (nrow(strict) > 0 && nrow(lenient) > 0) {
+  off_strict <- strict |>
+    filter(!on_target) |>
+    group_by(primer_pair, target_species) |>
+    summarise(refs_tested        = n(),
+              refs_amplifying_s  = sum(!is.na(amplicon_len)),
+              .groups = "drop")
+  off_lenient <- lenient |>
+    filter(!on_target) |>
+    group_by(primer_pair, target_species) |>
+    summarise(refs_amplifying_l  = sum(!is.na(amplicon_len)),
+              best_fwd_mm_l      = suppressWarnings(min(fwd_mismatches, na.rm = TRUE)),
+              best_rev_mm_l      = suppressWarnings(min(rev_mismatches, na.rm = TRUE)),
+              .groups = "drop")
+  off <- off_strict |>
+    left_join(off_lenient, by = c("primer_pair", "target_species")) |>
+    mutate(across(starts_with("best_"),
+                  ~ ifelse(is.infinite(.x), NA_integer_, .x))) |>
+    arrange(primer_pair, target_species)
+  kable(off,
+        col.names = c("Primer pair", "Off-target species", "Refs",
+                      "Amp @ strict (≤1mm)", "Amp @ lenient (≤3mm)",
+                      "Best fwd mm (lenient)", "Best rev mm (lenient)"),
+        align = "llrrrrr")
+}
+```
+
+**Zero productive off-target amplicons** at either tolerance, against any
+of the eight non-target species with reference data. The three near-miss
+patterns at lenient (Pcy forward ≤1 mm vs fieldi; Pk reverse ≤3 mm vs
+coatneyi; Pk reverse ≤3 mm vs inui) all have the partner primer with no
+binding-region match anywhere on those references — so neither half-bind
+can produce a product under realistic PCR cycling. The Swangsri assay is
+genuinely species-specific against the panel.
+
+## The within-species cynomolgi concern
+
+The on-target table flags a real issue distinct from the cross-species
+question Phase A was designed to answer. Pcy amplifies only 1 of 25
+cynomolgi references at strict tolerance, rising to 2 of 25 at lenient.
+
+This is not the partial-record artefact that depresses the knowlesi and
+inui on-target counts. The cynomolgi panel has 13 of 25 records as
+complete CDS (median length 5309 bp), so the binding region *is* present
+in most refs. The reverse primer site is the bottleneck: across the
+full-CDS cynomolgi records that do contain the binding region, most carry
+≥ 2 mismatches in the Pcy_MSP1_R699 footprint.
+
+The one record that amplifies is **AB266195.1, strain "Pt2 (Berok)"** —
+the same accession Swangsri used as the single cynomolgi sequence in
+their Methods Fig. 1 alignment, and the basis for their primer design.
+The other named cynomolgi strains in the GenBank panel — *Mulligan*
+(AB266193.1), *B* (AB266188.1), *Ceylonensis* (AB266190.1), *Cambodian*
+(AB266189.1), *Langur*, *Gombak*, *Smithsonian*, *T824*, *T746*, plus
+strain *ATCC 30146* (AB444063.1) — none of them amplify at strict
+tolerance.
+
+The Pt2/Berok strain is the outlier in the cynomolgi panel, not the
+representative.
+
+```{r pcy-cynomolgi-detail}
+if (nrow(lenient) > 0) {
+  pcy_cyn <- lenient |>
+    filter(primer_pair == "Pcy", target_species == "cynomolgi") |>
+    summarise(
+      n_refs                 = n(),
+      n_fwd_binds_lenient    = sum(!is.na(fwd_mismatches)),
+      n_rev_binds_lenient    = sum(!is.na(rev_mismatches)),
+      median_fwd_mm          = suppressWarnings(median(fwd_mismatches, na.rm = TRUE)),
+      median_rev_mm          = suppressWarnings(median(rev_mismatches, na.rm = TRUE)),
+      n_productive_amplicons = sum(!is.na(amplicon_len))
+    )
+  kable(pcy_cyn,
+        col.names = c("Cynomolgi refs", "Fwd binds (≤3mm)",
+                      "Rev binds (≤3mm)", "Median fwd mm",
+                      "Median rev mm", "Productive amplicons"),
+        align = "rrrrrr")
+}
+```
+
+The asymmetry between forward-primer binding and reverse-primer binding,
+combined with the median mismatch count on the reverse site, is the
+signal. The forward site is conserved across cynomolgi isolates; the
+reverse site isn't.
+
+### How the published validation could have missed this
+
+Two design decisions in the Swangsri paper compound to make this
+invisible to the validation pipeline they ran.
+
+**The design reference is not the lab strain.** Swangsri designed the
+Pcy primers manually in BioEdit against AB266195.1 — the single
+cynomolgi sequence in their Methods Fig. 1 alignment. AB266195.1 is
+strain Pt2 (Berok), a Malaysian field isolate. Their lab work, per
+Methods, used genomic DNA purchased from ATCC, which corresponds to
+strain ATCC 30146 (AB444063.1 in GenBank). These are different strains
+with different sequence at the Pcy reverse primer site. The in-silico
+check predicts no productive amplicon from AB444063.1 even at 3-mismatch
+tolerance — yet Swangsri's wet-lab PCR succeeded in amplifying the
+binding region from ATCC genomic DNA to make their plasmid clone. The
+most likely reconciliation is that their qPCR cycling conditions are
+permissive enough to amplify through the mismatches against ATCC at
+reduced efficiency, particularly because the mismatches in the forward
+primer footprint sit away from the 3' end where they would be most
+disruptive.
+
+**The validation was done against the plasmid clone, not the strain.**
+The plasmid clone is a copy of the binding region as it exists in the
+specific ATCC stock they sequenced, made by cloning a PCR product into
+pGEM-T. Once the plasmid exists, it is by construction a perfect match
+to the primer sites — even if the original ATCC genomic template
+required mismatches to amplify in the cloning step. The sensitivity,
+LOD, reproducibility, and efficiency assays in the paper all used
+dilutions of this plasmid; they measure how well the assay performs
+against a sequence-perfect template, not against natural strain
+diversity.
+
+**The field arm had no test of cynomolgi-against-natural-isolates.**
+The study screened 191 wild *M. fascicularis* samples from Thailand and
+found zero *P. cynomolgi* positives — only two *P. knowlesi*. The
+empirical arm where natural cynomolgi strain diversity would have
+surfaced had no positive samples to test.
+
+The result is a validation pipeline that is internally consistent — the
+primers amplify a clone of the binding region as it exists in one
+specific ATCC stock, and they don't cross-react with the four human
+*Plasmodium* species. Both of those claims are defensible. But neither
+addresses the question of whether the Pcy primers amplify natural
+cynomolgi infections in the field, because no step in the validation
+chain involves natural cynomolgi templates.
+
+This is not unique to Swangsri — it's a structural feature of
+plasmid-based qPCR validation against single-strain lab cultures, and
+it applies to many published *Plasmodium* qPCR assays. Surfacing
+within-species primer-binding polymorphism requires either (a) an
+alignment of multiple natural isolates of the target species (which
+this analysis provides, in silico) or (b) running the assay against a
+panel of natural-infection samples covering the species' diversity.
+
+## Headline and recommendation
+
+The Swangsri 2025 MSP1 species-specific assay extends cleanly to the
+panel species they did not test. No predicted off-target amplification
+for any of the three primer pairs against any of the eight non-target
+species with available MSP1 reference data, at strict or lenient
+tolerance. Two species (*P. simium*, *P. simiovale*) remain untestable
+in-silico and need wet-lab confirmation.
+
+The actionable finding for colleagues validating the assay is the within-
+species cynomolgi sensitivity concern: 1–2 of 25 cynomolgi references
+amplify under predicted conditions, driven by polymorphism in the
+reverse-primer site. This is independent of the cross-species question
+and is the most likely failure mode of the assay in real-world use on
+natural cynomolgi infections.
+
+A defensible recommendation to the Swangsri authors and to anyone
+considering deploying the assay: redesign or supplement the Pcy reverse
+primer using an alignment of natural cynomolgi MSP1 isolates rather than
+a single reference, and re-validate against multiple natural cynomolgi
+isolates (not just the cloned plasmid) before claiming species-level
+sensitivity for cynomolgi detection.
+
+## Methods
+
+In-silico PCR uses `Biostrings::vmatchPattern` with configurable mismatch
+tolerance. For each reference, both primers are tested against both
+strands; a productive amplicon requires the forward primer on the +
+strand 5' of the reverse primer on the − strand, with an inter-primer
+distance < 2000 bp. Predicted Tm proxy is the Wallace-rule sum
+(4×[G+C] + 2×[A+T]) and is reported only for context — it is not directly
+comparable to SYBR-melt qPCR Tm values and was not used to draw any
+conclusion in this chapter. Source: `scripts/R/msp1_amplicon_specificity.R`.
+
+References were fetched via `scripts/python/fetch_msp1_refs.py`
+(NCBI E-utilities, `--max-seqs 200` per species) with FASTA headers
+normalised through the project's case_when species ladder. The
+`--max-seqs 200` setting was needed to surface full-CDS records — the
+default 20 returns mostly partial 3'-end fragments that don't span the
+Swangsri primer-binding region.

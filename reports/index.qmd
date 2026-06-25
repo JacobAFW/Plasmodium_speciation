@@ -1,0 +1,96 @@
+---
+title: "Preface"
+---
+
+```{r setup, include=FALSE}
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(knitr)
+})
+
+read_int_or_na <- function(p) if (file.exists(p)) as.integer(readLines(p, warn = FALSE)[1]) else NA_integer_
+read_tsv_safe  <- function(p, ...) if (file.exists(p)) read_tsv(p, show_col_types = FALSE, ...) else tibble()
+
+# *_lengths.tsv = seqkit fx2tab output — two cols, no header.
+mit_lens <- read_tsv_safe("../outputs/qc/mit_lengths.tsv", col_names = c("id","len"))
+s18_lens <- read_tsv_safe("../outputs/qc/18S_lengths.tsv", col_names = c("id","len"))
+```
+
+This book documents v1 of a long-amplicon Nanopore *Plasmodium* speciation
+assay built around two markers: the mitochondrial genome (MIT, ~6 kb) and
+the 18S rRNA gene. The assay is intended to distinguish species in mixed
+infections and the simian-malaria zoonotic spillovers that co-circulate
+with human pathogens in the regions of interest.
+
+The chapters walk through every analytical step that informs primer
+selection — self-BLAST cross-species similarity, per-position alignment
+entropy, primer-candidate windows, and the cross-marker resolution
+table. Headline numbers are pulled live from `outputs/` at render time
+so the prose stays in sync with the data.
+
+## Reference panel at a glance
+
+The MIT panel carries `r nrow(mit_lens)` target-species sequences after
+filtering; 18S carries `r nrow(s18_lens)`. Cross-references are staged
+into `data/reference/` from the canonical legacy bundle and not edited.
+
+## Three findings the report leads with
+
+1. **MIT alone has one unresolvable cross-species pair: *vivax* / *simium*.**
+   Strict filter (`pident ≥ 99 AND cov_shorter ≥ 0.99`) flags 8 HSPs, all
+   in this single species pair. Consistent with biology — *P. simium* is
+   recently zoonotic from *P. vivax*. Chapter 2.
+
+2. **18S resolves every panel pair at the strict threshold.** Zero hits
+   in the strict 18S suspicious table. The looser ladder
+   (`pident ≥ 98 AND mincov ≥ 0.85`) surfaces **one partial-ambiguity
+   pair: *cynomolgi* / *fieldi***. Chapter 3.
+
+3. **18S coverage gap.** Of the 11 canonical target species, **10/11**
+   have at least one 18S reference. *P. simiovale* has zero — every
+   simiovale pair is `NA` on 18S and depends on MIT alone. Chapter 5.
+
+The dual-marker rationale holds in v1: every panel pair is resolvable
+by at least one marker (`combined_resolved = TRUE` for all 55 pairs).
+
+## How to read this book
+
+Each analytical chapter opens with a one-paragraph framing, surfaces
+the key tables and figures, and ends with a `## Methods` link to the
+corresponding `workflow/rules/0X_*.README.md`. R chunks are hidden by
+default; unfold them if you need the exact column types or filter
+thresholds. The reader is assumed to be CLI- and R-comfortable but new
+to malaria genomics — terms of art are defined inline at first use.
+
+## Caveats
+
+The assay's clinical-validation data is under embargo. Even though the
+public reference panel here (MIT + 18S from NCBI) is not embargo'd, the
+embargo posture extends to the project folder: nothing in `data/` or
+`outputs/` should leave it. Sample / reference IDs are preserved
+verbatim — no anonymisation, no renaming.
+
+BLAST is local. Never use percent identity alone. The active suspicious
+filter requires `pident ≥ 99` AND coverage of the shorter sequence
+≥ 0.99 — see Chapter 7's methods rationale.
+
+## Project structure
+
+```
+Speciation/
+├── data/
+│   ├── reference/           staged MIT and 18S refs + BLAST DB sources
+│   └── staged/              (Phase 5+ off-target genomes — deferred)
+├── scripts/
+│   ├── R/                   refactored argv-driven R scripts
+│   ├── sh/                  shell wrappers around blast/seqkit/mafft
+│   ├── python/              parse_18S_headers + seq_entropy
+│   └── legacy/              prior `.Rmd` (read-only reference)
+├── workflow/
+│   ├── Snakefile            top-level orchestrator
+│   ├── config.yaml          every tunable parameter
+│   └── rules/               per-stage rule files + per-rule README
+├── outputs/                 stage outputs (TSVs, alignments, entropy)
+├── reports/                 this book
+└── envs/                    vvg-box install + lockfile
+```

@@ -1,0 +1,126 @@
+---
+title: "Chapter 4 — Alignment, entropy, and primer-candidate windows"
+---
+
+```{r setup, include=FALSE}
+suppressPackageStartupMessages({ library(tidyverse); library(knitr) })
+read_tsv_safe <- function(p) if (file.exists(p)) read_tsv(p, show_col_types = FALSE) else tibble()
+
+mit_pp     <- read_tsv_safe("../outputs/entropy/mit.per_position.tsv")
+s18_pp     <- read_tsv_safe("../outputs/entropy/18S.per_position.tsv")
+mit_core   <- read_tsv_safe("../outputs/entropy/mit.core_bounds.tsv")
+s18_core   <- read_tsv_safe("../outputs/entropy/18S.core_bounds.tsv")
+mit_pc     <- read_tsv_safe("../outputs/entropy/mit.primer_candidates.tsv")
+s18_pc     <- read_tsv_safe("../outputs/entropy/18S.primer_candidates.tsv")
+
+mit_aln_len <- nrow(mit_pp)
+s18_aln_len <- nrow(s18_pp)
+
+core_one <- function(d) {
+  if (nrow(d) == 0) return(c(NA_integer_, NA_integer_, NA_integer_))
+  s <- as.integer(d$core_left[1]); e <- as.integer(d$core_right[1])
+  c(s, e, e - s + 1L)
+}
+mit_c <- core_one(mit_core)
+s18_c <- core_one(s18_core)
+```
+
+The target-species subsets are aligned with `mafft --auto`. Per-position
+Shannon entropy is computed over A/C/G/T (gaps ignored), with coverage
+defined as the fraction of sequences having a non-gap base at that
+position. Primer-candidate windows are sliding-window slices that pass
+low-entropy and high-coverage thresholds at one end of the alignment
+("left" = 5′ in alignment coordinates, "right" = 3′).
+
+## Alignment dimensions
+
+```{r aln-dims}
+tibble(marker = c("MIT", "18S"),
+       n_seqs = c(0, 0),  # filled below from the alignment file directly
+       aln_len = c(mit_aln_len, s18_aln_len)) |>
+  mutate(n_seqs = c(
+    length(grep("^>", readLines("../outputs/alignment/ma_mit.target.fasta"))),
+    length(grep("^>", readLines("../outputs/alignment/ma_18S.target.fasta")))
+  )) |>
+  kable(col.names = c("Marker", "Sequences", "Alignment length (bp)"))
+```
+
+## Core bounds
+
+The "core" of each alignment is the contiguous region with coverage
+≥ 90% and a minimum 50-bp run (`config.yaml::entropy.cov_thr` and
+`min_run`). It's where primer candidates are searchable; outside the
+core, gappy reference sequences make the entropy signal noisy.
+
+```{r core-bounds}
+tibble(marker = c("MIT", "18S"),
+       core_start = c(mit_c[1], s18_c[1]),
+       core_end   = c(mit_c[2], s18_c[2]),
+       core_len   = c(mit_c[3], s18_c[3])) |>
+  kable(col.names = c("Marker", "Core start", "Core end", "Core length"))
+```
+
+For comparison, the legacy run reports MIT core 749→6656 (length 5908)
+and 18S core 317→2218 (length 1902). The reproduction here matches.
+
+## Entropy + coverage panels
+
+Both panels share the same x-axis (alignment position) and overlay
+candidate primer windows (darker shade) and internal high-entropy
+regions (lighter shade) on the per-position curve.
+
+::: {#fig-mit-entropy layout-ncol=1}
+
+![MIT entropy vs alignment position. Low-entropy plateaus inside the
+core are where conserved primer-binding sites can sit; the high-entropy
+spikes are where the assay's discriminating power lives at sequencing
+time.](figures/mit_entropy_vs_position.png){#fig-mit-entropy-png}
+
+![MIT coverage vs alignment position. The 1.0 plateau across the core
+means every reference contributes at every position there; coverage
+drops at the alignment ends are gappy/truncated references and are why
+the core bounds clip them off.](figures/mit_coverage_vs_position.png){#fig-mit-coverage-png}
+
+MIT panel: (a) entropy, (b) coverage, both vs alignment position.
+:::
+
+::: {#fig-18s-entropy layout-ncol=1}
+
+![18S entropy vs alignment position. 18S shows alternating conserved
+and variable blocks (the "A-type / S-type" structure described in the
+published reference panel — see Chapter 6).](figures/18S_entropy_vs_position.png){#fig-18s-entropy-png}
+
+![18S coverage vs alignment position. The shorter alignment plus more
+heterogeneous reference lengths give a coverage profile that's flatter
+in the core and tapers more steeply at both ends than MIT.](figures/18S_coverage_vs_position.png){#fig-18s-coverage-png}
+
+18S panel: (a) entropy, (b) coverage.
+:::
+
+## Primer-candidate windows
+
+```{r primer-candidates}
+tibble(marker = c("MIT", "18S"),
+       n_candidate_windows = c(nrow(mit_pc), nrow(s18_pc)),
+       left  = c(sum(mit_pc$end_region == "left", na.rm = TRUE),
+                 sum(s18_pc$end_region == "left", na.rm = TRUE)),
+       right = c(sum(mit_pc$end_region == "right", na.rm = TRUE),
+                 sum(s18_pc$end_region == "right", na.rm = TRUE))) |>
+  kable(col.names = c("Marker", "Total windows", "Left-end", "Right-end"))
+```
+
+Each row of `<marker>.primer_candidates.tsv` is one window position.
+The `end_region` column flags which end of the core the window falls
+near (where a primer would actually be useful). Phase 5 work — primer3
+selection inside these windows, multiplex Tm/dimer checks, in-silico
+specificity — is deferred per HANDOFF.md.
+
+## Methods
+
+Alignment, entropy, and plotting:
+[`workflow/rules/03_alignment.README.md`](../workflow/rules/03_alignment.README.md).
+The entropy implementation lives at
+`scripts/python/seq_entropy.py` (copied unchanged from the legacy
+`scripts/legacy/speciation_long/scripts/seq_entropy.py`); the plotting
+script is `scripts/R/plot_entropy.R` (argv-driven refactor of the
+legacy version).

@@ -1,0 +1,38 @@
+markers: [mit, "18S"]
+
+paths:
+  data_ref: data/reference
+  outputs:  outputs
+  reports:  reports
+  legacy:   scripts/legacy/speciation_long
+
+# canonical "suspicious cross-species near-identity" filter
+suspicious:
+  pident_min:        99       # percent (0–100)
+  cov_shorter_min:   0.99
+  shorter_len_min:   10
+  top_n_hsps:        5
+
+# looser ladder for richer per-pair summaries (Phase 4)
+ladder:
+  high_conf:    {pident_min: 98, mincov_min: 0.85}
+  moderate:     {pident_min: 98, mincov_min: 0.70}
+  short_local:  {pident_min: 98, mincov_max: 0.50}
+
+species_targets:
+  - falciparum
+  - vivax
+  - knowlesi
+  - malariae
+  - ovale
+  - coatneyi
+  - inui
+  - fieldi
+  - cynomolgi
+  - simiovale
+  - simium
+
+# entropy / window scoring
+entropy:
+  cov_thr: 0.9
+  min_run: 50

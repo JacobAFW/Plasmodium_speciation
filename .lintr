@@ -1,0 +1,5 @@
+encoding: "UTF-8"
+linters: with_defaults(
+  object_usage_linter = NULL,
+  undesirable_function_linter = NULL
+)

@@ -1,0 +1,146 @@
+# Default .gitignore for a scripts-only research repo (R / Python / bioinformatics).
+# Aggressive by design: data is excluded by default. To publish ONE small synthetic
+# or already-public file, un-ignore it explicitly, e.g.:  !examples/toy.csv
+
+# === Research data & large/binary outputs — never commit ===
+data/
+raw/
+results/
+output/
+outputs/
+*.csv
+*.tsv
+*.xlsx
+*.parquet
+*.feather
+*.rds
+*.RData
+*.rda
+
+# Genomics formats
+*.fastq
+*.fq
+*.fastq.gz
+*.fq.gz
+*.bam
+*.sam
+*.cram
+*.bai
+*.crai
+*.vcf
+*.vcf.gz
+*.bcf
+*.bed
+*.bim
+*.fam
+*.ped
+*.gff
+*.gtf
+*.fasta
+*.fa
+*.fna
+*.h5
+*.hdf5
+*.npy
+*.npz
+
+# === Secrets / credentials ===
+.env
+.env.*
+*.pem
+*.key
+id_rsa*
+*.p12
+credentials
+.netrc
+.pgpass
+service-account*.json
+.aws/
+.ssh/
+
+# === Sample sheets / metadata (un-ignore deliberately if truly safe) ===
+*sample_sheet*
+*samplesheet*
+*manifest*
+*barcodes*
+
+# === R ===
+.Rproj.user/
+.Rhistory
+.Ruserdata
+renv/library/
+renv/local/
+renv/cellar/
+renv/staging/
+
+# === Python ===
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+*.egg-info/
+
+# === OS / editor / logs ===
+.DS_Store
+Thumbs.db
+*.swp
+*.log
+
+# ===========================================================================
+# Project-specific additions (Speciation) — found during the repo scan
+# ===========================================================================
+
+# Vendored tool environment (4.5 GB) and pipeline run-state — recreate via envs/install.sh
+vvg-box/
+.snakemake/
+envs/activate.sh          # generated; embeds an absolute home path (/Users/<user>/...)
+
+# BLAST database index files (data-derived; not covered by the formats list above)
+*.nhr
+*.nin
+*.nsq
+*.ndb
+*.njs
+*.nto
+*.not
+*.ntf
+*.nog
+*.nos
+*.nod
+*.pkl
+
+# Legacy HPC code — contains hardcoded usernames + internal server paths + nested data
+legacy/
+scripts/legacy/
+
+# Generated reports & figures (reproducible from the pipeline)
+logs/
+reports/_book/
+reports/.quarto/
+reports/figures/
+**/_freeze/
+
+# Shared data bundles
+share/
+*.zip
+
+# Internal working notes / handoff material (not for publication)
+CONTEXT-*.md
+HANDOFF.md
+INSTRUCTIONS.md
+MEMORY.md
+drafts/
+cowork_cheatsheet.*
+Cheatsheet*.pdf
+.claude/
+
+# Manuscript / third-party documents
+*.docx
+*.doc
+*.pptx
+
+# Flagged items — excluded by request (carry identifying info)
+scripts/python/fetch_msp1_refs.py   # hardcoded contact email
+reports/_quarto.yml                 # author name

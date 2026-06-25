@@ -1,0 +1,193 @@
+---
+title: "Chapter 7 — Methodological comparison with published assays"
+---
+
+```{r setup, include=FALSE}
+suppressPackageStartupMessages({
+  library(knitr)
+  library(tidyverse)
+})
+```
+
+Chapter 6 compared this assay against the Imwong et al. (2018) panel at
+the primer level — same marker (18S), different windows on the same
+alignment. This chapter zooms out to the methodological level and puts
+the long-amplicon Nanopore design alongside the three published
+*Plasmodium* speciation papers most relevant to the assay's
+deployment claims: Lee et al. (2011) on macaque reservoirs and the
+*P. knowlesi* phylogeny, Imwong et al. (2018) on ultrasensitive
+nested-PCR detection of asymptomatic simian-malaria infections in
+humans, and Swangsri et al. (2025) on SYBR-melt multiplex qPCR for
+three simian species. Each represents a different point on the
+sensitivity-resolution-cost surface, and each clarifies where the
+v1 long-read panel adds value and where it does not.
+
+## Three published assays, three eras of speciation
+
+```{r three-paper-table}
+tibble(
+  Dimension = c(
+    "Year",
+    "Platform",
+    "Markers",
+    "Amplicon size",
+    "Species detected",
+    "Mixed infections",
+    "Sensitivity",
+    "Output",
+    "Headline finding",
+    "Methodological limitation"
+  ),
+  `Lee 2011 (PLoS Pathog)` = c(
+    "2011",
+    "Nested PCR + Sanger cloning",
+    "18S (nested screen); full *csp* gene; whole ~6 kb mtDNA",
+    "~6 kb (mtDNA); ~1.5–1.7 kb (csp)",
+    "5 simian (knowlesi, inui, cynomolgi, coatneyi, fieldi)",
+    "Yes — up to 6 mtDNA haplotypes per macaque infection",
+    "Conventional nested PCR (~1–5 parasites/µL)",
+    "Full sequence — alleles, haplotypes, phylogeny",
+    "Macaques are *the* reservoir for *P. knowlesi*; no host-restricted lineages; TMRCA ~257 ka; population expansion 30–40 ka",
+    "Labour-intensive cloning; mtDNA-only resolution is excellent *within* *P. knowlesi* but not designed as a multi-species panel"
+  ),
+  `Imwong 2018 (J Infect Dis)` = c(
+    "2018/19",
+    "Ultrasensitive nested qPCR (uPCR)",
+    "18S rRNA (PlasmoM_N1F/N1R outer, N2F/N1R inner)",
+    "~347 bp outer; ~310 bp inner",
+    "knowlesi, cynomolgi confirmed (+ human spp via wider uPCR panel)",
+    "Yes — detected dual *P. vivax* + *P. cynomolgi*",
+    "LOD ~22 parasites/mL (best published for simian malaria)",
+    "Species call + Sanger confirmation if positive",
+    "Asymptomatic naturally-acquired *P. cynomolgi* and *P. knowlesi* infections occur in humans in Cambodia",
+    "Sanger required for species call beyond the 18S genus screen; published primer binding sites sit in a highly conserved interior — sensitive but discards most discriminatory signal"
+  ),
+  `Swangsri 2025 (Sci Rep)` = c(
+    "2025",
+    "SYBR Green multiplex qPCR + melt curve",
+    "*msp1*",
+    "~100–200 bp per species",
+    "knowlesi, cynomolgi, inui only",
+    "Yes, in spiked DNA mixtures; capped by Tm spacing",
+    "10 copies/µL",
+    "Tm bin per species (85.2 / 78.0 / 82.5 °C)",
+    "Cheap, fast, field-deployable three-species discrimination via distinct melt peaks",
+    "Three-species ceiling — Tm space doesn't extend cleanly to more targets; can't distinguish strains within a species; cross-validated only against the four human-pathogen species, not against close simian relatives"
+  )
+) |>
+  kable(align = "lll")
+```
+
+## Where the field sits today
+
+There are essentially three molecular tiers for *Plasmodium*
+speciation in routine use today.
+
+The first tier is qPCR/melt or LAMP. Swangsri sits here, alongside
+PET-PCR and several published probe-based qPCR panels. The platforms
+are cheap, fast, and deployable in resource-limited settings, but each
+new species costs a Tm slot or a probe channel and either runs out.
+This tier is well-suited to surveillance triage where the question is
+binary ("is this *P. knowlesi*, yes or no?") and the panel of interest
+is small.
+
+The second tier is nested PCR plus Sanger sequencing — the current
+research workhorse and where most published macaque-survey literature
+operates. Imwong's uPCR is the state of the art at this tier: a genus
+screen on 18S followed by either species-specific nested primers or
+direct sequencing of the inner amplicon. Sensitivity is excellent
+(<50 parasites/mL) and the assay captures sequence, but it is slow,
+single-marker, and the conserved 18S region that gives Imwong's
+primers their broad amplification range is also why 18S alone cannot
+discriminate every close pair — the *P. knowlesi* / *P. coatneyi* /
+*P. cynomolgi* triangle is famously slippery on 18S.
+
+The third tier is multi-marker phylogenetic typing — full *csp* plus
+6 kb mtDNA in Lee 2011's hands. Gold-standard for resolution and the
+only tier that recovers haplotype structure within mixed infections,
+but not a routine assay: it required PCR-then-clone-then-Sanger of
+multiple colonies per sample, and Lee's team spent the better part of
+a year resolving 36 patients and 11 macaques. It does not scale to
+hundreds of samples.
+
+The honest methodological gap, for the simian and zoonotic species
+this panel targets, is that no published assay simultaneously (a)
+calls species reliably for all 11 targets, (b) resolves within-species
+variants, (c) detects mixed infections at realistic abundance ratios,
+and (d) is cheap enough to run on hundreds of samples. Imwong is
+closest on sensitivity, Lee is closest on resolution, Swangsri is
+closest on cost — none does all three.
+
+## Where the long-read panel adds value
+
+Setting the v1 design against the three published assays clarifies
+where the methodological argument actually holds up.
+
+**Coverage breadth.** Imwong's panel covers fourteen species but only
+via genus screen plus Sanger confirmation; Swangsri's melt-curve
+approach does not scale past three or four species cleanly. The v1
+MIT + 18S long-amplicon panel is explicitly designed for eleven
+species in a single workflow with sequence-level evidence per call,
+rather than a Tm bin or a binary PCR result.
+
+**Within-marker resolution.** Chapter 6 of this book showed that
+Imwong's forward primers sit at 18S alignment positions 1683–1740 — a
+58 bp region with mean entropy 0.011. That position is essentially
+optimal for primer *binding* but contains almost no discriminatory
+signal. By spanning 4–5 kb of 18S the v1 amplicons capture the
+variable interior loops that actually separate species pairs. The same
+logic applies to mtDNA: Lee used the full ~6 kb mtDNA for exactly this
+reason — interior variation is where the species-pair signal lives,
+and a short conserved amplicon throws most of it away.
+
+**Mixed-infection resolution.** Lee's macaque samples carried up to
+six mtDNA haplotypes per infection. Tm-based assays cannot see this;
+Sanger-cloning is the painful way to recover it. Nanopore long reads
+recover it natively because each read is a single template molecule,
+so haplotype abundance comes for free with the basecalling.
+
+**Cost in the right currency.** ~$5/sample at 96-plex is competitive
+with nested qPCR per sample, and the workflow replaces "amplify →
+clone → Sanger → align → species-call" (Lee/Imwong) with a single
+sequencing run.
+
+## Where it does not beat the existing assays
+
+Sensitivity below ~100 parasites/µL is going to be a real challenge.
+Imwong's uPCR will out-detect long-amplicon Nanopore on
+low-parasitaemia asymptomatic carriers because 4–5 kb amplicons fall
+off a cliff as template degrades or fragments. The v1 assay's natural
+niche is symptomatic clinical samples and research-quality macaque
+blood, not the low-density asymptomatic infections Imwong specialised
+in. The framing in any deployment claim should be honest about this:
+the long-read panel is a resolution tool, not a screen-everyone tool.
+
+The other limitation worth flagging is that none of the v1 markers are
+faster-evolving than 18S/mtDNA. If the assay needs to discriminate
+within-species lineages (e.g. between geographic populations of
+*P. knowlesi*) for epidemiological tracking — Lee's use case —
+*csp* or *msp1* will outperform what MIT + 18S can deliver, regardless
+of read length. The MSP1 expansion staged in
+`scripts/R/msp1_full_gene_alignment.R` is partly a hedge against this:
+if it improves per-pair resolution beyond MIT + 18S alone, the panel
+gains a third marker; if it doesn't, the assay's published
+specifications hold without modification.
+
+## Sources
+
+- Lee KS, Divis PCS, Zakaria SK, Matusop A, Julin RA, Conway DJ,
+  Cox-Singh J, Singh B. *Plasmodium knowlesi*: Reservoir Hosts and
+  Tracking the Emergence in Humans and Macaques. *PLoS Pathog*
+  7(4):e1002015, 2011.
+  [doi:10.1371/journal.ppat.1002015](https://doi.org/10.1371/journal.ppat.1002015)
+- Imwong M, Madmanee W, Suwannasin K, Kunasol C, Peto TJ, Tripura R,
+  von Seidlein L, Nguon C, Davoeung C, Day NPJ, Dondorp AM, White NJ.
+  Asymptomatic Natural Human Infections With the Simian Malaria
+  Parasites *Plasmodium cynomolgi* and *Plasmodium knowlesi*.
+  *J Infect Dis* 219(5):695–702, 2019.
+  [doi:10.1093/infdis/jiy519](https://doi.org/10.1093/infdis/jiy519)
+- Swangsri T, Rucksaken R, Sricharern W, Nguitragool W, Saralamba N.
+  Development and validation of a multiplex PCR assay with melt curve
+  analysis for detecting simian *Plasmodium* in wild *Macaca
+  fascicularis*. *Sci Rep* 15:22872, 2025.
+  [doi:10.1038/s41598-025-07337-3](https://doi.org/10.1038/s41598-025-07337-3)

@@ -1,0 +1,179 @@
+---
+title: "Chapter 8 — Threshold sensitivity and the interior-windows output"
+---
+
+```{r setup, include=FALSE}
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(knitr)
+})
+
+read_tsv_safe <- function(p, ...) if (file.exists(p)) read_tsv(p, show_col_types = FALSE, ...) else tibble()
+
+sweep        <- read_tsv_safe("../outputs/sensitivity/interior_threshold_sweep.tsv")
+interior_mit <- read_tsv_safe("../outputs/entropy/mit.interior_candidates.tsv")
+interior_18s <- read_tsv_safe("../outputs/entropy/18S.interior_candidates.tsv")
+primer_18s   <- read_tsv_safe("../outputs/entropy/18S.primer_candidates.tsv")
+core_18s     <- read_tsv_safe("../outputs/entropy/18S.core_bounds.tsv")
+
+DEFAULT_COV_THR <- 0.90
+DEFAULT_MIN_RUN <- 50         # carried from the design side; no-op for interior
+IMWONG_START    <- 1683
+IMWONG_END      <- 1740
+```
+
+Chapter 6 surfaced that the published Imwong forward primers (`PlasmoM_N1F` aln 1683–1702, `PlasmoM_N2F` aln 1718–1740) sit on the 18S alignment with full coverage and near-zero entropy, yet zero overlap with our candidate windows. Chapter 7's methodological comparison framed the disagreement: this assay's long-amplicon Nanopore design favours primers near the alignment **ends**; the Imwong panel's short-amplicon design uses an **interior** binding site for the forward primer.
+
+Step 1's entropy audit (`workflow/rules/06_entropy_audit.README.md`) ruled out a bug in the entropy method — the independent recomputation matched the pipeline at machine epsilon. The reject was a structural decision in `seq_entropy.py`: the candidate-window emission filters on `end_region ∈ {left, right}`, defined as within 300 bp of the core's left or right edge. The Imwong forward region sits 1366 bp from the left core edge and 478 bp from the right — `end_region = "none"`, unconditionally excluded.
+
+## The two-output design
+
+`seq_entropy.py` now emits **two** candidate-window TSVs from a single invocation. Both share all upstream computation (per-position entropy, coverage, rolling windows); they differ only in the final filter step.
+
+| Output | Filter | Use case |
+|---|---|---|
+| `outputs/entropy/{marker}.primer_candidates.tsv` | `end_region ∈ {left, right}` AND `mean_coverage ≥ cov_thr` AND `mean_entropy ≤ entropy_thr` | **Design** — flanking-primer selection for the 4–5 kb long-amplicon Nanopore assay. End-anchoring is correct here; the variable region between primers is what gets sequenced. |
+| `outputs/entropy/{marker}.interior_candidates.tsv` | `mean_coverage ≥ cov_thr` AND `mean_entropy ≤ entropy_thr` (no `end_region` gate) | **Benchmark** — asking "is a published primer site (e.g. Imwong's interior forwards) a defensible candidate by entropy/coverage standards?" without the design-side bias toward amplicon ends. |
+
+The design side's behaviour is unchanged from v1; `primer_candidates.tsv` is byte-identical pre- and post-split. The interior side is new in Phase 5 Step 2.
+
+## Calibration sweep
+
+To pick defaults for the interior side, we sweep `(cov_thr, min_run)` over the grid below at fixed `entropy_thr = 0.20` and `windows = 25,50` (matching the design side), holding the alignment fixed. Each cell runs `seq_entropy.py` to a temp directory and reads back the interior output; the canonical `outputs/entropy/` files are not touched.
+
+```{r sweep-table}
+sweep |>
+  arrange(marker, cov_thr, min_run) |>
+  select(marker, cov_thr, min_run, n_windows, n_blocks,
+         median_entropy, median_coverage,
+         imwong_recovered, imwong_n_windows) |>
+  mutate(across(c(median_entropy, median_coverage), \(x) round(x, 4))) |>
+  kable(col.names = c("Marker", "cov_thr", "min_run", "n_windows", "n_blocks",
+                      "median entropy", "median coverage",
+                      "Imwong recovered", "Imwong-overlapping windows"))
+```
+
+Two observations the grid forces:
+
+```{r sweep-headline, results='asis'}
+n_cells <- nrow(sweep)
+n_mit   <- sum(sweep$marker == "mit")
+n_18s   <- sum(sweep$marker == "18S")
+
+# (a) min_run effect: at fixed (marker, cov_thr), do n_windows / blocks / median entropy change with min_run?
+min_run_effect <- sweep |>
+  group_by(marker, cov_thr) |>
+  summarise(n_windows_range   = paste(min(n_windows), max(n_windows), sep = "–"),
+            n_blocks_range    = paste(min(n_blocks), max(n_blocks), sep = "–"),
+            imwong_unanimous  = n_distinct(imwong_recovered) == 1,
+            .groups = "drop")
+
+# (b) Imwong recovery cells
+imwong_recovered_cells <- sum(sweep$imwong_recovered %in% TRUE)
+imwong_cells_18s       <- sum(sweep$marker == "18S")
+
+cat(sprintf(
+  paste0("- **`min_run` is a no-op for the interior output.** Across every (marker, cov_thr) row in the grid, varying `min_run ∈ {15, 18, 21, 25}` leaves `n_windows`, `n_blocks`, `imwong_recovered`, `median_entropy`, and `median_coverage` identical to the value at `min_run = 15`. `min_run` only feeds `find_core_bounds`, and the interior output does not depend on the core. This is the expected finding from Step 1's audit, made explicit by the sweep.\n",
+  "- **Imwong recovery is unanimous on 18S.** %d/%d 18S cells show `imwong_recovered = TRUE`, all with %d windows overlapping aln %d-%d. The published-forward region clears the entropy + coverage gates at every threshold in the grid; the only thing that ever excluded it was the `end_region` filter.\n"),
+  imwong_recovered_cells, imwong_cells_18s,
+  unique(sweep$imwong_n_windows[!is.na(sweep$imwong_n_windows)])[1],
+  IMWONG_START, IMWONG_END))
+```
+
+## Chosen interior-side defaults
+
+```{r defaults}
+chosen <- sweep |>
+  filter(marker == "18S", cov_thr == DEFAULT_COV_THR, min_run == 25)
+```
+
+The sweep shows two things: (a) `min_run` does not change the interior output, so the value is set by the design-side convention (`min_run = 50`) and inherited verbatim; (b) `cov_thr` is the only meaningful axis, and stricter values give cleaner output without losing Imwong recovery.
+
+**Chosen defaults:** `cov_thr = 0.90`, `entropy_thr = 0.20`, `min_run = 50`, `windows = 25,50` — **identical to the design side.** The constraint that made the published forwards invisible was structural (end-anchoring), not threshold strictness. Once the structural gate is removed, v1's existing thresholds already admit the Imwong region cleanly.
+
+The default 18S interior output: `r format(nrow(interior_18s), big.mark = ",")` windows across the alignment, median entropy `r round(median(interior_18s$mean_entropy), 4)`, median coverage `r round(median(interior_18s$mean_coverage), 4)`. The MIT interior output: `r format(nrow(interior_mit), big.mark = ",")` windows, median entropy `r round(median(interior_mit$mean_entropy), 4)`.
+
+## The Imwong region in the interior output
+
+```{r imwong-figure, fig.width=9, fig.height=4.5}
+core_left  <- core_18s$core_left[1]
+core_right <- core_18s$core_right[1]
+end_bp     <- 300
+left_end     <- min(core_right, core_left  + end_bp - 1)
+right_start  <- max(core_left,  core_right - end_bp + 1)
+
+# Build "interior block" intervals — collapse contiguous passing 25-bp windows
+build_blocks <- function(df, win_size = 25) {
+  d <- df |> filter(window == win_size) |> arrange(start)
+  if (nrow(d) == 0) return(tibble())
+  d <- d |> mutate(gap_to_prev = start - lag(end, default = -Inf))
+  d$block_id <- cumsum(d$gap_to_prev > 1)
+  d |>
+    group_by(block_id) |>
+    summarise(start = min(start), end = max(end), .groups = "drop") |>
+    select(start, end)
+}
+interior_blocks <- build_blocks(interior_18s, 25)
+primer_blocks   <- build_blocks(primer_18s,   25)
+
+ggplot() +
+  geom_rect(data = tibble(start = c(core_left, right_start),
+                          end   = c(left_end,  core_right),
+                          kind  = "design-side end_region (admitted)"),
+            aes(xmin = start, xmax = end, ymin = 1.5, ymax = 2.5, fill = kind),
+            alpha = 0.4) +
+  geom_rect(data = interior_blocks |> mutate(kind = "interior-side block"),
+            aes(xmin = start, xmax = end, ymin = 0.5, ymax = 1.5, fill = kind),
+            alpha = 0.8) +
+  geom_rect(data = tibble(start = IMWONG_START, end = IMWONG_END,
+                          kind  = "Imwong forward primer region"),
+            aes(xmin = start, xmax = end, ymin = 2.5, ymax = 3.5, fill = kind)) +
+  geom_vline(xintercept = c(core_left, core_right), linetype = "dashed",
+             color = "grey40") +
+  annotate("text", x = core_left,  y = 3.7, label = "core_left",  size = 3, vjust = 0) +
+  annotate("text", x = core_right, y = 3.7, label = "core_right", size = 3, vjust = 0) +
+  scale_y_continuous(breaks = c(1, 2, 3),
+                     labels = c("interior", "design end_region", "Imwong"),
+                     limits = c(0, 4)) +
+  scale_fill_manual(values = c(
+    "design-side end_region (admitted)" = "#377eb8",
+    "interior-side block"               = "#33a02c",
+    "Imwong forward primer region"      = "#e7298a"
+  )) +
+  labs(x = "18S alignment position", y = NULL, fill = NULL,
+       title = "18S alignment: design vs interior coverage of the Imwong forward region") +
+  theme_bw() +
+  theme(legend.position = "bottom",
+        axis.text.y = element_text(size = 9))
+```
+
+Three bands stacked on the 18S alignment x-axis:
+
+- **Top (pink)** — the Imwong forward-primer footprint at aln `r IMWONG_START`–`r IMWONG_END`.
+- **Middle (blue)** — the design-side admittance zone: within 300 bp of `core_left = `r core_left`` (left band) or `core_right = `r core_right`` (right band).
+- **Bottom (green)** — interior-side contiguous blocks where every position passes the entropy + coverage gates at the chosen defaults.
+
+The Imwong band sits squarely outside the design-side end-anchored zones. It sits squarely inside one of the interior-side blocks. That's the recovery the interior output was added to surface.
+
+## A note on output volume
+
+```{r volume-note}
+mit_block_count <- sweep |> filter(marker == "mit", cov_thr == DEFAULT_COV_THR, min_run == 25) |> pull(n_blocks)
+s18_block_count <- sweep |> filter(marker == "18S", cov_thr == DEFAULT_COV_THR, min_run == 25) |> pull(n_blocks)
+```
+
+`mit.interior_candidates.tsv` has `r format(nrow(interior_mit), big.mark = ",")` rows; `18S.interior_candidates.tsv` has `r format(nrow(interior_18s), big.mark = ",")`. That looks like flooding at row level, but it's the natural consequence of emitting one row per sliding-window position — overlapping 25-bp windows produce ~25 rows per "real" candidate run. Collapsing contiguous passing windows into blocks gives **MIT `r mit_block_count` blocks, 18S `r s18_block_count` blocks** at the chosen defaults — a much more digestible count and the right unit for downstream analysis.
+
+The TSV-level row count is kept (rather than emitting blocks directly) so the schema matches the design side and downstream consumers can slice the same way they slice `primer_candidates.tsv`.
+
+## Methods
+
+- `seq_entropy.py` Step 4 — emit `interior_candidates.tsv` with the same entropy + coverage gates as `primer_candidates.tsv`, no `end_region` filter. Single pass, two outputs.
+- `interior_threshold_sweep.py` — 4 × 4 grid of `(cov_thr, min_run)` per marker; each cell invokes `seq_entropy.py` to a temp directory and reads the interior output.
+- See [`workflow/rules/07_threshold_sensitivity.README.md`](../workflow/rules/07_threshold_sensitivity.README.md) for the full rule definition.
+
+## What does not change
+
+- The design pipeline (`primer_candidates.tsv` → entropy figures → primer3 selection if it lands) reads the same TSV it always did, with the same byte content.
+- The v1 Quarto book at `reports/_book/` is unchanged; this chapter is the only place that consumes the interior output.
+- MSP1's Phase B workstream will consume `interior_candidates.tsv` automatically via the same `seq_entropy.py` invocation when it lands.

@@ -1,0 +1,118 @@
+---
+title: "Chapter 3 — 18S cross-species similarity"
+---
+
+```{r setup, include=FALSE}
+suppressPackageStartupMessages({ library(tidyverse); library(knitr) })
+read_tsv_safe <- function(p) if (file.exists(p)) read_tsv(p, show_col_types = FALSE) else tibble()
+
+s18_blast <- read_tsv_safe("../outputs/blast/self_blast_18S.tsv")
+s18_susp  <- read_tsv_safe("../outputs/cross_species/18S_suspicious.tsv")
+s18_loose <- read_tsv_safe("../outputs/cross_species/18S_suspicious_loose.tsv")
+s18_pair  <- read_tsv_safe("../outputs/cross_species/18S_pair_summary.tsv")
+s18_cov   <- read_tsv_safe("../outputs/cross_species/18S_species_coverage.tsv")
+s18_clos  <- read_tsv_safe("../outputs/cross_species/18S_closest_per_seq.tsv")
+
+n_blast   <- nrow(s18_blast)
+n_susp_st <- nrow(s18_susp)
+n_susp_lo <- nrow(s18_loose)
+n_pairs   <- nrow(s18_pair)
+n_strict  <- sum(s18_pair$strict_ambiguity, na.rm = TRUE)
+```
+
+18S takes the same self-BLAST → species-extraction → top-5 HSPs scaffold
+as MIT, with one extra step: 18S headers carry descriptive species
+names rather than self-describing IDs, so an explicit
+`outputs/cross_species/18S_acc_to_header.tsv` mapping table parses
+species out of headers before the cross-species logic runs.
+
+`r format(n_blast, big.mark = ",")` BLAST hits in `self_blast_18S.tsv`.
+The strict filter
+(`pident ≥ 99 AND cov_shorter ≥ 0.99 AND shorter_len ≥ 10`) returns
+**`r n_susp_st`** hits.
+
+## Strict filter — empty
+
+The strict filter file is header-only. At pident ≥ 99 with full
+shorter-sequence coverage, **no cross-species 18S pair is flagged.**
+This is the headline result that supports the dual-marker rationale in
+the resolving direction: 18S separates the *vivax*/*simium* pair MIT
+cannot resolve (Chapter 2).
+
+The strict filter being too aggressive to surface partial ambiguities
+is the next problem. The looser ladder addresses it.
+
+## Looser-threshold re-pass
+
+The looser filter (`pident ≥ 98 AND mincov ≥ 0.85`) is applied to the
+same `self_blast_18S.tsv` — no re-BLAST. *mincov* = `min(qcov, scov)`
+is more conservative than *cov_shorter* (always ≤ cov_shorter), so this
+ladder is genuinely looser-on-pident-and-stricter-on-coverage relative
+to the strict filter.
+
+```{r s18-loose-table}
+if (nrow(s18_loose) > 0) {
+  s18_loose |>
+    select(query_species, subject_species, pident, aln_len,
+           qcov, scov, mincov, cov_shorter, mismatch, bitscore) |>
+    arrange(desc(pident)) |>
+    kable(digits = c(0, 0, 3, 0, 4, 4, 4, 4, 0, 1))
+} else {
+  cat("(empty — no pair surfaces at the looser threshold)\n")
+}
+
+n_unique_pairs_lo <- if (nrow(s18_loose) > 0) {
+  s18_loose |>
+    transmute(p = pmap_chr(list(query_species, subject_species),
+                           \(a, b) paste(sort(c(a, b)), collapse = " vs "))) |>
+    distinct() |>
+    nrow()
+} else 0L
+```
+
+`r n_susp_lo` HSPs surface across `r n_unique_pairs_lo` unordered
+species pair(s). The headline finding is `cynomolgi` / `fieldi` —
+partial 18S ambiguity that the strict filter is too aggressive to
+catch. The report should treat these as "watch this pair" rather than
+"unresolvable", but the strict-version claim ("18S resolves all panel
+pairs") needs the looser-version footnote attached.
+
+## Per-pair summary
+
+```{r s18-pair-summary}
+s18_pair |>
+  arrange(desc(max_mincov)) |>
+  head(15) |>
+  kable(digits = c(NA, 0, 3, 0, 4, 4, 0, 0, NA, NA),
+        col.names = c("Pair", "n_HSPs", "best_pident", "max_aln_len",
+                      "max_cov_shorter", "max_mincov", "min_mismatch",
+                      "min_gapopen", "strict_ambig.", "ladder_class"))
+```
+
+`r n_pairs` cross-species pairs across 18S. `r n_strict` strict-
+ambiguity flag(s). The ladder column shows where the partial
+ambiguities sit — pairs at `high_confidence_possible_ambiguity` are
+the ones the looser filter surfaces.
+
+## Coverage caveat
+
+```{r s18-coverage}
+kable(s18_cov, col.names = c("Species", "18S references", "Covered"))
+
+missing <- s18_cov |> filter(!is_covered) |> pull(species)
+n_uncov <- length(missing)
+```
+
+`r n_uncov` panel species has zero 18S references in the panel
+(**`r if (n_uncov == 0) "none" else paste(missing, collapse = ", ")`**).
+For *that* species, 18S can't say anything; the resolution table
+correctly returns NA for every pair involving it. Several other species
+have only 1 reference — see Chapter 5 for the per-pair confidence
+notes.
+
+## Methods
+
+Filter implementation:
+[`workflow/rules/02_cross_species.README.md`](../workflow/rules/02_cross_species.README.md).
+Looser-threshold re-pass and species-coverage check:
+[`workflow/rules/04_resolution.README.md`](../workflow/rules/04_resolution.README.md).
