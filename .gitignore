@@ -95,7 +95,8 @@ Thumbs.db
 # Vendored tool environment (4.5 GB) and pipeline run-state — recreate via envs/install.sh
 vvg-box/
 .snakemake/
-envs/activate.sh          # generated; embeds an absolute home path (/Users/<user>/...)
+# generated; embeds an absolute home path (/Users/<user>/...)
+envs/activate.sh
 
 # BLAST database index files (data-derived; not covered by the formats list above)
 *.nhr
@@ -142,5 +143,15 @@ Cheatsheet*.pdf
 *.pptx
 
 # Flagged items — excluded by request (carry identifying info)
-scripts/python/fetch_msp1_refs.py   # hardcoded contact email
-reports/_quarto.yml                 # author name
+# hardcoded contact email
+scripts/python/fetch_msp1_refs.py
+# author name
+reports/_quarto.yml
+
+# Nested side project — separate from the speciation project, kept out of git
+18S_rPLU_aside/
+
+# Internal decisions / status / CC hand-off prompts (collaborator + unpublished-protocol refs; not for publication)
+DECISIONS.md
+STATUS.md
+cc_prompt_*.md
