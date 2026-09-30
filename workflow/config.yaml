@@ -19,6 +19,21 @@ ladder:
   moderate:     {pident_min: 98, mincov_min: 0.70}
   short_local:  {pident_min: 98, mincov_max: 0.50}
 
+# Reference curation applied when the panel ("target") reference set is built
+# from the full archive. The archive under data/reference/ is never pruned --
+# every decision here is reversible by deleting a line and re-running.
+# Rationale for each entry: simiovale_fieldi_aside/outputs/
+# simiovale_fieldi_report_corrected.md, sections 3c and 4. Applied 2026-08-28.
+reference_curation:
+  mit:
+    # Exact duplicate of Psimiovale_AB434920_1 (0 mismatches over all 5809
+    # mutually covered columns after rotation; AB434920 is 89 bp longer and is
+    # the annotated type anchor, so it is the one kept). Two copies of one
+    # haplotype double-weight it in every BLAST margin. Dropping it changes no
+    # diagnostic-site call at cox1, cytb, cox3 or the whole genome -- only n.
+    exclude_ids:
+      - Psimiovale_AY800109_1
+
 species_targets:
   - falciparum
   - vivax
@@ -36,3 +51,75 @@ species_targets:
 entropy:
   cov_thr: 0.9
   min_run: 50
+
+# Phase 5 Step 5 — in-silico PCR specificity.
+# Engine is blastn + primer3 thermodynamics, NOT MFEprimer: `bioconda::mfeprimer`
+# does not exist on any platform (see workflow/rules/11_specificity.README.md).
+# `efficiency_threshold` is HANDOFF Step 5's 0.5 cut, carried over unchanged —
+# the efficiency model is built so that 0.5 keeps a physical meaning.
+specificity:
+  anneal_temp_c:        55.0   # centre of the efficiency logistic (C)
+  logistic_k:           3.0    # steepness of the logistic (C)
+  three_prime_window:   5      # a mismatch in this many 3'-terminal bases zeroes a primer
+  max_mismatch:         5      # drop binding sites with more total mismatches
+  size_tolerance:       0.25   # +/- fraction of designed amplicon_len that counts as on-size
+  blast_word_size:      7
+  efficiency_threshold: 0.5
+  # Per-marker cap on reported product length. MIT references are ~5.9 kb and
+  # 18S references ~2.3 kb, so these are generous but keep runaway pairings out.
+  max_product_bp:
+    mit: 8000
+    "18S": 4000
+  # --- off-target half -----------------------------------------------------
+  # The off-target subjects are whole genomes (6.4 Gbp staged, two of them
+  # ~3 Gbp hosts), not a 48-sequence reference set, so the locator needs a
+  # word size that does not return a random 7-mer every 16 kb.
+  #
+  # 10 is not a guess. Every primer here is 21-24 bp, so a site with at most
+  # ONE mismatch anywhere still contains an exact run of >=10 and is still
+  # found. And one mismatch is already far past the point of mattering: by the
+  # README's calibration a single interior mismatch drops pair efficiency to
+  # ~0.1, so ANY hit that can cross the 0.5 flag threshold needs both primers
+  # binding essentially perfectly. The flag decision is untouched; what is
+  # given up is some zero-efficiency junk in the `borderline` bucket. Measured
+  # on E. coli: word 7 -> 3 amplicons, word 10 -> 1, and the two dropped both
+  # scored efficiency 0.0.
+  offtarget_word_size:      10
+  # One pass per genome covers MIT and 18S pairs together, so the product cap
+  # is the larger of the two markers'. Erring long is the conservative
+  # direction for a screen that is looking FOR off-target products.
+  offtarget_max_product_bp: 8000
+  # The manifest `purpose` that means "another Plasmodium, just not one of the
+  # 11 panel targets". The panel is genus-conserved BY DESIGN -- amplify any
+  # Plasmodium, then speciate by reading the amplicon -- so amplifying a
+  # congener is the intended behaviour, not a specificity failure. Off-target
+  # in the pass/fail sense therefore means NON-Plasmodium: host, vector or
+  # contaminant. Congener amplification is annotated, never a fail.
+  # Corrected 2026-08-28; see workflow/rules/11_specificity.README.md.
+  congener_purpose: non_target_plasmodium
+
+# Fixed diagnostic sites separating P. fieldi from P. simiovale, in the
+# coordinates of the MIT anchor reference `Psimiovale_AB434920_1`.
+#
+# Source: simiovale_fieldi_aside/outputs/simiovale_fieldi_report_corrected.md
+# sections 6a/6b (2026-08-17 corrected re-analysis; the original investigation
+# reported 0 cox1 sites, which was an artefact of putting cytb-only fragments
+# in the cox1 alignment -- only 8 of 6676 columns were eligible, so that scan
+# could only ever return zero).
+#
+# EITHER window separates the pair. cox1 carries 7 fixed sites on the better
+# sampling (7 simiovale / 18 fieldi, 3 and 5 independent depositing groups);
+# cytb carries 5 (6 / 7). The DBS <=4 kb constraint is therefore "cox1 OR
+# cytb", not "cytb alone" -- see workflow/rules/12_resolution_margin.README.md.
+diagnostic_windows:
+  anchor: Psimiovale_AB434920_1
+  pair: fieldi_vs_simiovale
+  windows:
+    cox1:
+      start: 3321
+      end:   4754
+      sites: [3378, 3674, 4004, 4185, 4259, 4346, 4394]
+    cytb:
+      start: 4780
+      end:   5928
+      sites: [4881, 5235, 5613, 5656, 5835]

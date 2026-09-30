@@ -14,6 +14,9 @@ include: "rules/06_entropy_audit.smk"
 include: "rules/07_threshold_sensitivity.smk"
 include: "rules/08_primer_design.smk"
 include: "rules/09_primer_design_dbs.smk"
+include: "rules/10_offtarget_manifest.smk"
+include: "rules/11_specificity.smk"
+include: "rules/12_resolution_margin.smk"
 
 OUT     = config["paths"]["outputs"]
 REPORTS = config["paths"]["reports"]

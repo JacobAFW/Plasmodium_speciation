@@ -155,3 +155,20 @@ reports/_quarto.yml
 DECISIONS.md
 STATUS.md
 cc_prompt_*.md
+
+# Nested side project — simiovale/fieldi reference-label investigation (internal, like 18S_rPLU_aside)
+simiovale_fieldi_aside/
+
+# All nested investigation asides are internal working analyses — never publish
+*_aside/
+.claude/settings.local.json
+
+# autonomous-run artifacts (local only)
+runs/
+AUTONOMY_PROTOCOL.md
+MISSION.md
+
+# autonomous-run artifacts (local only)
+runs/
+AUTONOMY_PROTOCOL.md
+MISSION.md

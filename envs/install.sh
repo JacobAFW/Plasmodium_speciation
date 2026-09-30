@@ -171,13 +171,23 @@ else
 fi
 
 echo "==> Installing core CLI tools (blast+, seqkit, mafft, snakemake, quarto)"
+# r-base is pinned to 4.5.3 — the version in envs/environment.lock.yaml and the
+# one every r45-built R package in this env was compiled against. This line used
+# to read `r-base=4.3`, which is what the first install (2026-05-05) requested;
+# the R-package step below then pulled R forward to 4.5.3 to satisfy r-tidyverse,
+# so the loose pin never bit. It bit on 2026-08-03: re-running this script
+# downgraded r-base 4.5.3 -> 4.3.3, and because no r43 build of r-tidyverse or
+# r-officer was resolvable the solver REMOVED both outright and downgraded
+# bioconductor-ggtree 4.0.4 -> 3.10.0. The run was interrupted before the
+# R-package step could put them back, leaving a broken env (and orphaning the
+# BiocManager/CRAN packages built under 4.5.3). Keep this pinned to the lockfile.
 $INSTALLER \
   blast \
   seqkit \
   mafft \
   snakemake-minimal \
   quarto \
-  r-base=4.3
+  r-base=4.5.3
 
 echo "==> Installing Python deps (biopython, pandas, numpy)"
 $INSTALLER \
@@ -226,18 +236,23 @@ Rscript -e '
 '
 
 #---------------------------------------------------------------------------
-# Step 4: Phase 5 primer-design tools (primer3, MFEprimer)
+# Step 4: Phase 5 primer-design tools (primer3)
 #---------------------------------------------------------------------------
 # Added for Phase 5 Step 3 (primer-pair selection). primer3 is the CLI;
 # primer3-py wraps the same thermodynamic core so we can compute per-primer
 # hairpin ΔG and cross-pair heterodimer ΔG without a second CLI pass. Both
-# resolve under vvg-box/opt/umamba/envs/vvg-box/bin/. MFEprimer is Step 5's
-# in-silico PCR engine — installed here in the same pass so no re-solve is
-# needed later. Off-target reference genomes stay Jacob-staged (embargo).
-echo "==> Installing Phase-5 primer-design tools (primer3, MFEprimer)"
+# resolve under vvg-box/opt/umamba/envs/vvg-box/bin/.
+#
+# MFEprimer is NOT installed here and this line no longer asks for it. It used
+# to read `$INSTALLER primer3 mfeprimer`, which could never have worked:
+# `mfeprimer` does not exist on bioconda for osx-arm64, osx-64, noarch OR
+# linux-64 (verified 2026-08-17), so under `set -e` that line aborts the whole
+# script. Step 5's in-silico PCR runs on blastn + primer3 thermodynamics
+# instead — see workflow/rules/11_specificity.README.md. blast is already
+# installed in Step 3, so there is nothing extra to add.
+echo "==> Installing Phase-5 primer-design tools (primer3)"
 $INSTALLER \
-  primer3 \
-  mfeprimer
+  primer3
 
 # primer3-py exposes primer3's thermodynamic functions from Python. Install
 # via pip because bioconda's osx-arm64 build lags. Skip if already present.

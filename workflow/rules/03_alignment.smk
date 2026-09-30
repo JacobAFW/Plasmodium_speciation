@@ -10,7 +10,23 @@ OUT      = config["paths"]["outputs"]
 REPORTS  = config["paths"]["reports"]
 
 # Same regex the legacy chunks use — substring-matching against the panel.
-SPECIES_PAT = "vivax|falciparum|knowlesi|malariae|ovale|coat|inui|fieldi|cyno|simiovale|simium"
+#
+# `unverified` is not a species. It is the prefix given to a reference whose
+# identity has been shown to be wrong but which is kept, relabelled rather than
+# deleted, so the record stays auditable — currently only
+# `Punverified_ATCC-30157_AB444133` (deposited as P. fieldi; carries the
+# P. simiovale allele at 12/12 fixed mitochondrial diagnostic sites). It is
+# admitted to the panel FASTA so the curation decision stays visible in the
+# data, and every consumer that maps a header onto one of the 11 panel species
+# returns None for it, so it can never be scored as a species. See the
+# reference-curation note in 03_alignment.README.md.
+SPECIES_PAT = ("vivax|falciparum|knowlesi|malariae|ovale|coat|inui|fieldi|"
+               "cyno|simiovale|simium|unverified")
+
+# Accessions held out of the panel set (duplicates, unusable records). Config,
+# not a literal, so the decision is reviewable in one place and reversible by
+# deleting a line. Empty list = no curation, which is the default.
+CURATION = config.get("reference_curation", {})
 
 
 rule subset_to_targets_mit:
@@ -23,13 +39,28 @@ rule subset_to_targets_mit:
     message:
         "[03_alignment] seqkit grep mit (panel species)"
     params:
-        pat = SPECIES_PAT,
+        pat     = SPECIES_PAT,
+        exclude = " ".join(CURATION.get("mit", {}).get("exclude_ids", [])),
     shell:
         r"""
         mkdir -p $(dirname {log})
         # MIT IDs are self-describing & case-stable; no -n -i.
         bash scripts/sh/subset_to_targets.sh \
-            {input.fasta} {output.fasta} '{params.pat}' > {log} 2>&1
+            {input.fasta} {output.fasta}.all '{params.pat}' > {log} 2>&1
+        # Curation: drop the ids listed in config.reference_curation.mit.
+        # Done here rather than by pruning the archive so data/reference/
+        # stays the complete, unedited record.
+        if [ -n "{params.exclude}" ]; then
+            printf '%s\n' {params.exclude} > {output.fasta}.drop
+            seqkit grep -v -f {output.fasta}.drop {output.fasta}.all \
+                > {output.fasta} 2>> {log}
+            echo "[curation] dropped: {params.exclude}" >> {log}
+            rm -f {output.fasta}.drop
+        else
+            mv {output.fasta}.all {output.fasta}
+        fi
+        rm -f {output.fasta}.all
+        echo "[subset_to_targets] $(grep -c '^>' {output.fasta}) sequences kept" >> {log}
         """
 
 
