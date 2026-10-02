@@ -33,6 +33,15 @@ reference_curation:
     # diagnostic-site call at cox1, cytb, cox3 or the whole genome -- only n.
     exclude_ids:
       - Psimiovale_AY800109_1
+    # --- added by the 2026-09-30 reference cleanup ---
+    # Two PCR chimeras confirmed independently twice (inui_inuilike_aside/outputs/
+    # chimera_verdicts.tsv; runs/2026-09-25_panel_ship_gate_verify/PART_A_VERDICT.md).
+    # They are RELABELLED in the archive, not deleted, and excluded here. The
+    # exclusion is MANDATORY and must name the tagged id: SPECIES_PAT matches a
+    # substring of the id, and the tags still contain "inui" / "coat", so tagging
+    # alone does not remove them from the target set.
+      - CHIMERA_cynomolgi-x-inui_Pcynomologi_LT19_AT5_KU245045_1
+      - CHIMERA_coatneyi-x-knowlesi_Pknowlesi_LT4_AT4_KU245037_1
 
 species_targets:
   - falciparum
